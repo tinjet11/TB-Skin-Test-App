@@ -1,0 +1,2 @@
+rootProject.name = "arcore_depth_mm"
+include ':app'
