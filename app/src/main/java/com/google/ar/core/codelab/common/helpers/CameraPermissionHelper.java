@@ -20,29 +20,52 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.provider.Settings;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 /** Helper to ask camera permission. */
 public final class CameraPermissionHelper {
   private static final int CAMERA_PERMISSION_CODE = 0;
-  private static final String CAMERA_PERMISSION = Manifest.permission.CAMERA;
+  //private static final String CAMERA_PERMISSION = Manifest.permission.CAMERA;
 
-  /** Check to see we have the necessary permissions for this app. */
+  private static final String REQUIRED_PERMISSIONS[] = {
+          Manifest.permission.WRITE_EXTERNAL_STORAGE,
+          Manifest.permission.CAMERA
+  };
+
+  /**
+   * Check to see we have the necessary permissions for this app.
+   */
   public static boolean hasCameraPermission(Activity activity) {
-    return ContextCompat.checkSelfPermission(activity, CAMERA_PERMISSION)
-        == PackageManager.PERMISSION_GRANTED;
+    for (String p : REQUIRED_PERMISSIONS) {
+      if (ContextCompat.checkSelfPermission(activity, p) ==
+              PackageManager.PERMISSION_GRANTED) {
+        return ContextCompat.checkSelfPermission(activity, p)
+                == PackageManager.PERMISSION_GRANTED;
+      }
+    }
+    return false;
   }
 
-  /** Check to see we have the necessary permissions for this app, and ask for them if we don't. */
+  /**
+   * Check to see we have the necessary permissions for this app,
+   *   and ask for them if we don't.
+   */
   public static void requestCameraPermission(Activity activity) {
-    ActivityCompat.requestPermissions(
-        activity, new String[] {CAMERA_PERMISSION}, CAMERA_PERMISSION_CODE);
+    ActivityCompat.requestPermissions(activity, REQUIRED_PERMISSIONS,
+            CAMERA_PERMISSION_CODE);
   }
 
-  /** Check to see if we need to show the rationale for this permission. */
+  /**
+   * Check to see if we need to show the rationale for this permission.
+   */
   public static boolean shouldShowRequestPermissionRationale(Activity activity) {
-    return ActivityCompat.shouldShowRequestPermissionRationale(activity, CAMERA_PERMISSION);
+    for (String p : REQUIRED_PERMISSIONS) {
+      if (ActivityCompat.shouldShowRequestPermissionRationale(activity, p)) {
+        return ActivityCompat.shouldShowRequestPermissionRationale(activity, p);
+      }
+    }
+    return false;
   }
 
   /** Launch Application Setting to grant permission. */
@@ -52,4 +75,5 @@ public final class CameraPermissionHelper {
     intent.setData(Uri.fromParts("package", activity.getPackageName(), null));
     activity.startActivity(intent);
   }
+
 }

@@ -11,14 +11,15 @@ def setVersionName = { ->
 }
 
 android {
-    compileSdkVersion 28
+    //noinspection GradleCompatible
+    compileSdkVersion 33
     defaultConfig {
         applicationId "com.google.ar.core.codelab.depth"
 
         // AR Optional apps must declare minSdkVersion >= 14.
         // AR Required apps must declare minSdkVersion >= 24.
         minSdkVersion 24
-        targetSdkVersion 28
+        targetSdkVersion 34
         versionCode 1
         versionName setVersionName()
     }
@@ -30,6 +31,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        customDebugType {
+            debuggable true
         }
     }
 }
@@ -43,6 +47,21 @@ dependencies {
     // https://github.com/javagl/Obj
     implementation 'de.javagl:obj:0.2.1'
 
-    implementation 'com.android.support:appcompat-v7:28.0.0'
-    implementation 'com.android.support:design:28.0.0'
+    //noinspection GradleCompatible
+    implementation 'androidx.appcompat:appcompat:1.0.0'
+    implementation 'com.google.android.material:material:1.0.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    //camera version
+    def cameraxVersion = "1.2.3"
+    implementation "androidx.camera:camera-core:${cameraxVersion}"
+    implementation "androidx.camera:camera-camera2:${cameraxVersion}"
+    implementation "androidx.camera:camera-lifecycle:${cameraxVersion}"
+
+    // CameraX View class
+    implementation 'androidx.camera:camera-view:1.2.3'
+
+    // Retrofit  for making HTTP requests
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+
 }

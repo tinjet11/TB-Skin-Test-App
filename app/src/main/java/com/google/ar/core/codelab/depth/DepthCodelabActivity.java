@@ -16,14 +16,26 @@
 
 package com.google.ar.core.codelab.depth;
 
+
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
-import android.support.v7.app.AppCompatActivity;
+import android.os.Environment;
 import android.util.Log;
 import android.view.MotionEvent;
+import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
+
 import com.google.ar.core.Anchor;
 import com.google.ar.core.ArCoreApk;
 import com.google.ar.core.Camera;
@@ -32,9 +44,6 @@ import com.google.ar.core.Coordinates2d;
 import com.google.ar.core.Frame;
 import com.google.ar.core.HitResult;
 import com.google.ar.core.Plane;
-import com.google.ar.core.Point;
-import com.google.ar.core.Point.OrientationMode;
-import com.google.ar.core.Pose;
 import com.google.ar.core.Session;
 import com.google.ar.core.Trackable;
 import com.google.ar.core.TrackingState;
@@ -45,16 +54,25 @@ import com.google.ar.core.codelab.common.helpers.SnackbarHelper;
 import com.google.ar.core.codelab.common.helpers.TapHelper;
 import com.google.ar.core.codelab.common.helpers.TrackingStateHelper;
 import com.google.ar.core.codelab.common.rendering.BackgroundRenderer;
+import com.google.ar.core.codelab.common.rendering.CenterOrientationRenderer;
+import com.google.ar.core.codelab.common.rendering.CircleOrientationRenderer;
 import com.google.ar.core.codelab.common.rendering.ObjectRenderer;
 import com.google.ar.core.codelab.common.rendering.OcclusionObjectRenderer;
+import com.google.ar.core.codelab.imagecapture.ImageCaptureActivity;
+import com.google.ar.core.codelab.orientation.OrientationHandler;
 import com.google.ar.core.exceptions.CameraNotAvailableException;
 import com.google.ar.core.exceptions.UnavailableApkTooOldException;
 import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException;
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException;
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException;
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException;
+
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.IntBuffer;
 import java.util.ArrayList;
+
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
@@ -62,7 +80,7 @@ import javax.microedition.khronos.opengles.GL10;
  * This is a simple example that shows how to create an augmented reality (AR) application using the
  * ARCore API. The application will allow the user to tap to place a 3d model of the Android robot.
  */
-public class DepthCodelabActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
+public class DepthCodelabActivity extends AppCompatActivity implements GLSurfaceView.Renderer , SensorEventListener{
   private static final String TAG = DepthCodelabActivity.class.getSimpleName();
 
   // Rendering. The Renderers are created here, and initialized when the GL surface is created.
@@ -74,6 +92,9 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
   private Session session;
   private final SnackbarHelper messageSnackbarHelper = new SnackbarHelper();
   private DisplayRotationHelper displayRotationHelper;
+  private OrientationHandler orientationHandler;
+  private CircleOrientationRenderer circleOrientationRenderer;
+  private CenterOrientationRenderer centerOrientationRenderer;
   private final TrackingStateHelper trackingStateHelper = new TrackingStateHelper(this);
   private TapHelper tapHelper;
 
@@ -96,13 +117,41 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
   private boolean showDepthMap = false;
   private boolean calculateUVTransform = true;
 
+  private int mWidth;
+  private int mHeight;
+
+  private  boolean capturePicture = false;
+
+  private TextView distance_TextView;
+
+  private TextView orientation_TextView;
+
+  private TextView orientation2_TextView;
+
+  private Button mButton;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     setContentView(R.layout.activity_main);
     surfaceView = findViewById(R.id.surfaceview);
+    // display the value of between the depth image and camera
+    distance_TextView = findViewById(R.id.distance_TextView);
+    distance_TextView.setText("0 mm"); // Empty text initially
+
+    // display the angle value of orientation of a phone with roll side
+    orientation_TextView = findViewById(R.id.orientation_TextView);
+    orientation_TextView.setText("0 '"); // Empty text initially
+
+    // display the angle value of orientation of a phone with pitch side
+    orientation2_TextView = findViewById(R.id.orientation2_TextView);
+    orientation2_TextView.setText("0 '"); // Empty text initially
+
     displayRotationHelper = new DisplayRotationHelper(/*context=*/ this);
+    orientationHandler = new OrientationHandler(/*context=*/this);
+    circleOrientationRenderer = new CircleOrientationRenderer(/*context=*/this);
+    centerOrientationRenderer = new CenterOrientationRenderer(/*context=*/this, orientationHandler);
+    orientationHandler.setOrientationRenderer(centerOrientationRenderer);
 
     // Set up tap listener.
     tapHelper = new TapHelper(/*context=*/ this);
@@ -115,6 +164,11 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
     surfaceView.setRenderer(this);
     surfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
     surfaceView.setWillNotDraw(false);
+
+    // Set up a Cirlce renderer overlays the surface view (for orientation)
+    addContentView(circleOrientationRenderer, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.FILL_PARENT, FrameLayout.LayoutParams.FILL_PARENT));
+    addContentView(centerOrientationRenderer, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.FILL_PARENT, FrameLayout.LayoutParams.FILL_PARENT));
+
 
     installRequested = false;
 
@@ -129,6 +183,13 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
             toggleDepthButton.setText(R.string.depth_not_available);
           }
         });
+
+
+    mButton = findViewById(R.id.next);
+    mButton.setOnClickListener(view -> {
+      Intent secondActivityIntent = new Intent(DepthCodelabActivity.this, ImageCaptureActivity.class);
+      startActivity(secondActivityIntent);
+    });
   }
 
   @Override
@@ -202,6 +263,8 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
 
     surfaceView.onResume();
     displayRotationHelper.onResume();
+    orientationHandler.onResume();
+
   }
 
   @Override
@@ -212,11 +275,17 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
       // to query the session. If Session is paused before GLSurfaceView, GLSurfaceView may
       // still call session.update() and get a SessionPausedException.
       displayRotationHelper.onPause();
+      orientationHandler.onPause();
       surfaceView.onPause();
       session.pause();
     }
   }
 
+  @Override
+  public void onDestroy() {
+    super.onDestroy();
+
+  }
   @Override
   public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
     if (!CameraPermissionHelper.hasCameraPermission(this)) {
@@ -249,11 +318,11 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
       backgroundRenderer.createOnGlThread(/*context=*/ this);
       backgroundRenderer.createDepthShaders(/*context=*/ this, depthTexture.getDepthTexture());
 
-      virtualObject.createOnGlThread(/*context=*/ this, "models/andy.obj", "models/andy.png");
+      virtualObject.createOnGlThread(/*context=*/ this, "models/box.obj", "models/box_texture.png");
       virtualObject.setMaterialProperties(0.0f, 2.0f, 0.5f, 6.0f);
 
       if (isDepthSupported) {
-        occludedVirtualObject.createOnGlThread(/*context=*/ this, "models/andy.obj", "models/andy.png");
+        occludedVirtualObject.createOnGlThread(/*context=*/ this, "models/box.obj", "models/box_texture.png");
         occludedVirtualObject.setDepthTexture(
             depthTexture.getDepthTexture(),
             depthTexture.getDepthWidth(),
@@ -269,7 +338,22 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
   public void onSurfaceChanged(GL10 gl, int width, int height) {
     displayRotationHelper.onSurfaceChanged(width, height);
     GLES20.glViewport(0, 0, width, height);
+    mWidth = width;
+    mHeight = height;
   }
+
+  @Override
+  public void onSensorChanged(SensorEvent event) {
+  }
+
+
+
+  @Override
+  public void onAccuracyChanged(Sensor sensor, int i) {
+
+  }
+
+
 
   @Override
   public void onDrawFrame(GL10 gl) {
@@ -292,28 +376,37 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
       Frame frame = session.update();
       Camera camera = frame.getCamera();
 
+
       if (frame.hasDisplayGeometryChanged() || calculateUVTransform) {
         calculateUVTransform = false;
         float[] transform = getTextureTransformMatrix(frame);
         occludedVirtualObject.setUvTransformMatrix(transform);
       }
 
+
       // Retrieves the latest depth image for this frame.
       if (isDepthSupported) {
         depthTexture.update(frame);
       }
 
+
       // Handle one tap per frame.
       handleTap(frame, camera);
 
+      // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
+      trackingStateHelper.updateKeepScreenOnFlag(camera.getTrackingState());
+
       // If frame is ready, render camera preview image to the GL surface.
       backgroundRenderer.draw(frame);
+
       if (showDepthMap) {
         backgroundRenderer.drawDepth(frame);
       }
+      if (capturePicture ) {
+        capturePicture = false;
+        SavePicture();
+      }
 
-      // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
-      trackingStateHelper.updateKeepScreenOnFlag(camera.getTrackingState());
 
       // If not tracking, don't draw 3D objects, show tracking failure reason instead.
       if (camera.getTrackingState() == TrackingState.PAUSED) {
@@ -348,9 +441,11 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
       }
       messageSnackbarHelper.showMessage(this, messageToShow);
 
+
       // Visualize anchors created by touch.
       float scaleFactor = 1.0f;
       for (Anchor anchor : anchors) {
+        // checking if ARCore is actively tracking the anchor and has reliable position and orientation
         if (anchor.getTrackingState() != TrackingState.TRACKING) {
           continue;
         }
@@ -364,34 +459,74 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
           occludedVirtualObject.draw(viewmtx, projmtx, colorCorrectionRgba, OBJECT_COLOR);
         } else {
           virtualObject.updateModelMatrix(anchorMatrix, scaleFactor);
-          virtualObject.draw(viewmtx, projmtx, colorCorrectionRgba, OBJECT_COLOR);
         }
+
+        /*
+        // Calculate the distance between the camera and the plane.
+        float distanceToPlane = calculateDistanceToPlane(anchor.getPose(), camera.getPose());
+        String distanceText = String.format(Locale.getDefault(), "%.2f", distanceToPlane);
+
+        // Update the TextView with the distance text.
+        //distance_TextView.setText(distanceText);
+
+         */
+
       }
 
+      if (depthTexture.getDepthValue() >= 701) {
+        // above 701, ratio will increase by 1 every 74 mm
+        int r = Math.min(15, Math.max(10, Math.round(depthTexture.getDepthValue() / 74)));//74.2
+        centerOrientationRenderer.updateCircleSize(r);
+      }
+      else{
+        // depthImage Value is smaller than 701, ratio will be 9 for the center circle
+        int r = 9;
+        centerOrientationRenderer.updateCircleSize(r);
+      }
+
+
+      // Format the depth value as a string.
+      String distanceText = String.format("%d", depthTexture.getDepthValue());
+
+      // Display the distance text in a TextView.
+      distance_TextView.setText(distanceText);
+
+      // Format the orientation value as a string.
+      String orientation = String.format("%.2f '", orientationHandler.getdegree());
+
+      // Display the orientation text in a TextView.
+      orientation_TextView.setText(orientation);
+
+
+      String orientation2 = String.format("%.2f '", orientationHandler.getDegree2());
+
+      // Display the orientation text in a TextView.
+      orientation2_TextView.setText(orientation2);
+
+      if (depthTexture.getDepthValue() <= 700 && orientationHandler.getdegree() == 0f &&  orientationHandler.getDegree2() == 0f){
+        try {
+          Intent secondActivityIntent = new Intent(DepthCodelabActivity.this, ImageCaptureActivity.class);
+          startActivity(secondActivityIntent);
+        } catch (Exception e) {
+          e.printStackTrace();
+        }
+      }
     } catch (Throwable t) {
-      // Avoid crashing the application due to unhandled exceptions.
+      // Avoid crashing the application due to unhandled exceptions.S
       Log.e(TAG, "Exception on the OpenGL thread", t);
     }
   }
 
-  // Handle only one tap per frame, as taps are usually low frequency compared to frame rate.
-  private void handleTap(Frame frame, Camera camera) {
+
+    private void handleTap(Frame frame, Camera camera) {
     MotionEvent tap = tapHelper.poll();
     if (tap != null && camera.getTrackingState() == TrackingState.TRACKING) {
       for (HitResult hit : frame.hitTest(tap)) {
-        // Check if any plane was hit, and if it was hit inside the plane polygon
         Trackable trackable = hit.getTrackable();
-        // Creates an anchor if a plane or an oriented point was hit.
-        if ((trackable instanceof Plane
-                && ((Plane) trackable).isPoseInPolygon(hit.getHitPose())
-                && (calculateDistanceToPlane(hit.getHitPose(), camera.getPose()) > 0))
-            || (trackable instanceof Point
-                && ((Point) trackable).getOrientationMode()
-                    == OrientationMode.ESTIMATED_SURFACE_NORMAL)) {
+        if (trackable instanceof Plane && ((Plane) trackable).isPoseInPolygon(hit.getHitPose())) {
           // Hits are sorted by depth. Consider only closest hit on a plane or oriented point.
-          // Cap the number of objects created. This avoids overloading both the
-          // rendering system and ARCore.
-          if (anchors.size() >= 20) {
+          // Cap the number of objects created. This avoids overloading both the rendering system and ARCore.
+          if (anchors.size() >= 30) { // original is 20
             anchors.get(0).detach();
             anchors.remove(0);
           }
@@ -416,19 +551,56 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
     return false;
   }
 
-  // Calculate the normal distance to plane from cameraPose, the given planePose should have y axis
-  // parallel to plane's normal, for example plane's center pose or hit test pose.
-  private static float calculateDistanceToPlane(Pose planePose, Pose cameraPose) {
-    float[] normal = new float[3];
-    float cameraX = cameraPose.tx();
-    float cameraY = cameraPose.ty();
-    float cameraZ = cameraPose.tz();
-    // Get transformed Y axis of plane's coordinate system.
-    planePose.getTransformedAxis(1, 1.0f, normal, 0);
-    // Compute dot product of plane's normal with vector from camera to plane center.
-    return (cameraX - planePose.tx()) * normal[0]
-        + (cameraY - planePose.ty()) * normal[1]
-        + (cameraZ - planePose.tz()) * normal[2];
+  public void onSavePicture(View view) {
+    // Here just a set a flag so we can copy
+    // the image from the onDrawFrame() method.
+    // This is required for OpenGL so we are on the rendering thread.
+    this.capturePicture = true;
+  }
+
+  /**
+   * Call from the GLThread to save a picture of the current frame.
+   */
+  public void SavePicture() throws IOException {
+    int pixelData[] = new int[mWidth * mHeight];
+
+    // Read the pixels from the current GL frame.
+    IntBuffer buf = IntBuffer.wrap(pixelData);
+    buf.position(0);
+    GLES20.glReadPixels(0, 0, mWidth, mHeight,
+            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf);
+
+    // Create a file in the external storage in the device /depthcodelab
+    final File out = new File(Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_PICTURES) + "/depthImages", "IMG" +
+            Long.toHexString(System.currentTimeMillis()) + ".png");
+
+    // Make sure the directory exists
+    if (!out.getParentFile().exists()) {
+      out.getParentFile().mkdirs();
+    }
+
+    // Convert the pixel data from RGBA to what Android wants, ARGB.
+    int bitmapData[] = new int[pixelData.length];
+    for (int i = 0; i < mHeight; i++) {
+      for (int j = 0; j < mWidth; j++) {
+        int p = pixelData[i * mWidth + j];
+        int b = (p & 0x00ff0000) >> 16;
+        int r = (p & 0x000000ff) << 16;
+        int ga = p & 0xff00ff00;
+        bitmapData[(mHeight - i - 1) * mWidth + j] = ga | r | b;
+      }
+    }
+    // Create a bitmap.
+    Bitmap bmp = Bitmap.createBitmap(bitmapData,
+            mWidth, mHeight, Bitmap.Config.ARGB_8888);
+
+    // Write it to disk.
+    FileOutputStream fos = new FileOutputStream(out);
+    bmp.compress(Bitmap.CompressFormat.PNG, 100, fos);
+    fos.flush();
+    fos.close();
+
   }
 
   /**
@@ -466,3 +638,33 @@ public class DepthCodelabActivity extends AppCompatActivity implements GLSurface
     return uvTransform;
   }
 }
+
+
+
+
+  /*
+
+  // Calculate the normal distance to plane from cameraPose, the given planePose should have y axis
+  // parallel to plane's normal, for example plane's center pose or hit test pose.
+  private static float calculateDistanceToPlane(Pose planePose, Pose cameraPose) {
+    float[] normal = new float[3];
+    float cameraX = cameraPose.tx();
+    float cameraY = cameraPose.ty();
+    float cameraZ = cameraPose.tz();
+    // Get transformed Y axis of plane's coordinate system.
+    planePose.getTransformedAxis(1, 1.0f, normal, 0);
+    // Compute dot product of plane's normal with vector from camera to plane center.
+    return (cameraX - planePose.tx()) * normal[0]
+            + (cameraY - planePose.ty()) * normal[1]
+            + (cameraZ - planePose.tz()) * normal[2];
+  }
+
+
+  // Calculate the distance between the camera and the object
+  private float calculateDistanceToObj(Pose objectPose, Pose cameraPose) {
+    float dx = objectPose.tx() - cameraPose.tx();
+    float dy = objectPose.ty() - cameraPose.ty();
+    float dz = objectPose.tz() - cameraPose.tz();
+    return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  */
